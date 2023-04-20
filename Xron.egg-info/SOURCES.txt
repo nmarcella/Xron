@@ -1,4 +1,8 @@
+README.md
 setup.py
+MD_EXAFS/__init__.py
+MD_EXAFS/md_exafs_analysis.py
+MD_EXAFS/md_exafs_make.py
 PtCO_ovito/__init__.py
 PtCO_ovito/ovito_tools.py
 Xron.egg-info/PKG-INFO

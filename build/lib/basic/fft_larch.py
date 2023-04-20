@@ -1,3 +1,4 @@
+import numpy as np
 from numpy import (pi, arange, zeros, ones, sin, cos,
                    exp, log, sqrt, where, interp, linspace)
 # from numpy.fft import fft, ifft

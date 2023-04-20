@@ -10,6 +10,35 @@ from scipy.integrate import trapz
 from fastdist import fastdist
 import pyperclip
 
+import numpy as np
+
+
+def center_nanoparticle(positions, box_size, pt_atom_indices):
+    # Calculate the center of mass of the nanoparticle
+    center_of_mass = np.mean(positions[pt_atom_indices], axis=0)
+    
+    # Wrap the center of mass to the simulation box
+    center_of_mass %= box_size
+    
+    # Shift the positions so that the center of mass is at the center of the simulation box
+    shift_vector = box_size / 2 - center_of_mass
+    new_positions = positions + shift_vector
+    new_positions %= box_size
+    
+    return new_positions
+
+
+def make_rdf_feff(distances):
+    global rmeshPrime
+    digitized =np.digitize(distances
+        , rmeshPrime)
+    unique, counts = np.unique(digitized, return_counts=True)
+    counter = [0]*len(rmeshPrime)
+    for i in range(len(unique)):
+        counter[unique[i]-1] = counts[i]/(rmeshPrime[1]-rmeshPrime[0])
+    return np.asarray(counter)
+
+
 class AnalysisPipeline:
     def __init__(self, pipeline, framerange):
         self.pipeline = pipeline
@@ -20,6 +49,7 @@ class AnalysisPipeline:
             "t_all_positions": {},
             "t_c_ads": {},
             "t_cn_ptpt": {},
+            "t_frame_rdf": {},
         }
 
     def run(self):
@@ -42,7 +72,11 @@ class AnalysisPipeline:
             c_ads = len(interesting_c)
             pt_atom_coords = all_positions[ptatom_index]
 
-            self.update_results(frame, ptpt_msrd, ptpt_R, pt_atom_coords, c_ads, np.mean(ptptcn))
+            box_size = data.cell.matrix.diagonal()[:3]
+
+            rdf = self.frame_rdf(pt_atom_coords, box_size, ptatom_index)
+
+            self.update_results(frame, ptpt_msrd, ptpt_R, pt_atom_coords, c_ads, np.mean(ptptcn), rdf)
 
         self.process_results()
 
@@ -102,23 +136,40 @@ class AnalysisPipeline:
 
         return ptptcn, ptpt_R, ptpt_msrd
 
-    def update_results(self, frame, ptpt_msrd, ptpt_R, pt_atom_coords, c_ads, cn_ptpt):
+    def frame_rdf(self, pt_atom_coords, cell, ptatom_index):
+        centered_coords = center_nanoparticle(pt_atom_coords, cell, ptatom_index)
+        num_atoms = len(centered_coords)
+        distances = np.linalg.norm(centered_coords[:, None, :] - centered_coords[None, :, :], axis=-1)
+        np.fill_diagonal(distances, np.inf)  # set diagonal to infinity to exclude self-distances
+        distances = distances.flatten()
+        distances = distances[distances != np.inf]  # remove self-distances
+        distances = distances[distances < 6]  # remove distances greater than 6
+        rdf = make_rdf_feff(distances)/num_atoms
+        return rdf
+
+    def update_results(self, frame, ptpt_msrd, ptpt_R, pt_atom_coords, c_ads, cn_ptpt, rdf):
         self.results["t_v_ave"][frame] = ptpt_msrd
         self.results["t_r_ave"][frame] = ptpt_R
         self.results["t_all_positions"][frame] = pt_atom_coords
         self.results["t_c_ads"][frame] = c_ads
         self.results["t_cn_ptpt"][frame] = cn_ptpt
+        self.results["t_frame_rdf"][frame] = rdf
 
     def process_results(self):
         t_cns = np.array(list(self.results["t_cn_ptpt"].values()))
         t_all_msrd = np.array(list(self.results["t_v_ave"].values()))
         t_all_r = np.array(list(self.results["t_r_ave"].values()))
         t_all_c_ads = np.array(list(self.results["t_c_ads"].values()))
+        t_all_rdf = np.array(list(self.results["t_frame_rdf"].values()))
 
         self.results["t_cn_ptpt"] = t_cns
         self.results["t_v_ave"] = t_all_msrd
         self.results["t_r_ave"] = t_all_r
         self.results["t_c_ads"] = t_all_c_ads
+        self.results["t_frame_rdf"] = t_all_rdf
+
+
+
 
 
 import numpy as np
@@ -166,3 +217,55 @@ class TrajectoryPlot:
 
 # plotter = TrajectoryPlot(t_cns, t_all_msrd, t_all_r, t_all_c_ads, axis_ranges)
 # plotter.plot()
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+class TrajectoryPlot_MPL:
+    def __init__(self, t_cns, t_all_msrd, t_all_r, t_all_c_ads, axis_ranges, plot_name):
+        self.t_cns = t_cns
+        self.t_all_msrd = t_all_msrd
+        self.t_all_r = t_all_r
+        self.t_all_c_ads = t_all_c_ads
+        self.axis_ranges = axis_ranges
+        self.plot_name = plot_name
+
+    def plot(self):
+        plt.rcParams.update({'font.size': 6})
+        time = self.axis_ranges['time_range']
+        fig, ax1 = plt.subplots(figsize=(4, 3), dpi=300)
+
+        ax1.plot(time, self.t_cns, color='blue', label='CNs')
+        ax1.set_xlabel('Frame')
+        ax1.set_ylabel('Pt-Pt Coordination number', color='blue')
+        ax1.tick_params(axis='y', labelcolor='blue')
+        ax1.set_xlim(self.axis_ranges['x'])
+        ax1.set_ylim(self.axis_ranges['y1'])
+
+        ax2 = ax1.twinx()
+        ax2.plot(time, self.t_all_msrd, color='red', label='MSRD')
+        ax2.set_ylabel('Pt-Pt MSRD', color='red')
+        ax2.tick_params(axis='y', labelcolor='red')
+        ax2.set_ylim(self.axis_ranges['y2'])
+
+        ax3 = ax1.twinx()
+        ax3.plot(time, self.t_all_r, color='green', label='R')
+        ax3.set_ylabel('Pt-Pt R', color='green')
+        ax3.tick_params(axis='y', labelcolor='green')
+        ax3.spines['right'].set_position(('outward', 80))
+        ax3.set_ylim(self.axis_ranges['y3'])
+
+        ax4 = ax1.twinx()
+        ax4.plot(time, self.t_all_c_ads, color='black', linestyle='--', label='CO-Ads', alpha=0.5)
+        ax4.set_ylabel('# of adsorbed CO', color='black')
+        ax4.tick_params(axis='y', labelcolor='black')
+        ax4.spines['right'].set_position(('outward', 40))
+        ax4.set_ylim(self.axis_ranges['y4'])
+
+        fig.tight_layout()
+        plt.title(self.plot_name)
+        plt.show()
+
+
+
