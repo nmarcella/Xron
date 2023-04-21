@@ -1,5 +1,7 @@
 # Read dat from master directory
-from basic import *
+from basic.io import *
+from basic.ftt_larch import *
+from basic.pre_process import *
 
 class EXAFS_Chi:
     def __init__(self, all_xmu, n_cut):
